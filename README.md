@@ -7,8 +7,11 @@ This was built from https://github.com/RocketChat/hubot-rocketchat-boilerplate
     - [Adding Members](#adding-members)
     - [Scheduling the Reminder](#scheduling-the-reminder)
 - [Install Instructions (Developers)](#install-instructions-developers)
-  - [Running Locally](#running-locally)
 - [Configuration](#configuration)
+
+This bot adds a standup functionality to any rocketchat chat room. Stand ups are initiate and
+members are pinged in direct messages to avoid spamming the channel. The
+result is posted back to the stand up room channel
 
 ## Using the Bot
 
@@ -102,25 +105,6 @@ bot help
 ```
 
 Which will show you the available commands
-
-
-### Running Locally
-
-You can run with the shell adapter just to test
-
-1. Run `yarn` or `npm install` to install dependencies
-2. Use the `yarn shell` script to start the bot with shell adaptor
-3. Say `hubot help` to see what it can do
-
-When you're ready to connect the bot to an instance of Rocket.Chat
-
-1. Create a user for the bot, with the role _bot_
-2. Create an `./.env` file with the user and connection settings
-3. Run `yarn local` script to connect to your local Rocket.Chat
-
-The `local` npm script will read in the env file, so you can populate and modify
-those settings easily (see [configuration](#configuration)). In production, they
-should be pre-populated in the server environment.
 
 
 ## Configuration
