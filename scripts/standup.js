@@ -8,6 +8,15 @@
 //
 const Conversation = require('hubot-conversation');
 const schedule = require('node-schedule');
+const fs = require('fs');
+const path = require('path');
+
+
+const BRAIN_FILE = path.join(process.env.FILE_BRAIN_PATH || '.', 'brain-dump.json');
+
+const newStandUp = () => {
+    return {members: {}, schedule: null, time: null};
+};
 
 
 const generateStandUpKey = (msg) => {
@@ -15,106 +24,186 @@ const generateStandUpKey = (msg) => {
 };
 
 
-module.exports = function (robot) {
-
-    const switchBoard = new Conversation(robot);
-    const robotUserId = robot.adapter.userId;
-
-    const robotDmRoomId = (msg) => {
-        return `${msg.envelope.user.id}${robotUserId}`;  // rocketchat concatenates users to create private message rooms
-    };
-
-    const newStandUp = () => {
-        return {members: {}, schedule: null, time: null};
+const setUserStandUp = (robot, roomId, userId, content, upsert=true) => {
+    let standup = robot.brain.get(`standup-${roomId}-${userId}`) || {};
+    if (upsert) {
+        standup = {...standup, ...content};
+    } else {
+        standup = content;
     }
+    robot.brain.set(`standup-${roomId}-${userId}`, standup);
+};
 
-    // const userSettingsKey = (msg) => {
-    //     return `user-settings-${msg.envelope.user.id}`;
-    // };
+const getUserStandUp = (robot, roomId, userId) => {
+    return robot.brain.get(`standup-${roomId}-${userId}`);
+};
 
-    // const upsertUserSetting = (msg, setting, value) => {
-    //     const settings = (robot.brain.get(userSettingsKey(msg)) || {});
-    //     robot.brain.set(userSettingsKey(msg), {...settings, [setting]: value});
-    // };
+const addUserToStandUp = (robot, roomId, userId, username) => {
+    const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
+    standup.members[userId] = username;
+    robot.brain.set(`standup-${roomId}`, standup);
+};
 
-    const askForUserStandup = (standUpRoomId, userId) => {
-        const dialog = switchBoard.startDialog(robot);
-        const standup = robot.brain.get(`standup-${standUpRoomId}`)
-        setUserStandup(standUpRoomId, userId, {}, false);
+const removeUserFromStandUp = (robot, roomId, userId) => {
+    const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
+    delete standup.members[userId];
+    robot.brain.set(`standup-${roomId}`, standup);
+};
 
-        robot.reply('What did you do yesterday?');
-        dialog.addChoice(/.*/i, function (msgYday) {
-            setUserStandup(standUpRoomId, userId, {yday: msgYday.message.text});
 
-            msgYday.reply('What will you do today?');
-            dialog.addChoice(/.*/i, (msgToday) => {
-                setUserStandup(standUpRoomId, userId, {today: msgToday.message.text});
+const standUpConversation = (robot, standUpRoomId, userId) => {
+    const dmRoomId = `${userId}${robot.adapter.userId}`;
 
-                msgToday.reply('Any blockers?');
-                dialog.addChoice(/.*/i, (msgBlockers) => {
-                    setUserStandup(standUpRoomId, userId, {blockers: msgBlockers.message.text});
+    const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId}};
+    const fakeMessage = {
+        message: fakeTarget,
+        reply: content => robot.send(fakeTarget, content)
+    };
+    const dialog = robot.switchBoard.startDialog(fakeMessage);
+    const standup = robot.brain.get(`standup-${standUpRoomId}`);
+    const username = standup.members[userId];
 
-                    const content = robot.brain.get(key);
-                    if (standupTarget) {
-                        msgBlockers.envelope.user.roomID = standUpRoomId;  // reply to the stored preferred response room
-                    }
-                    msgBlockers.send(`#### Stand Up: ${username}
+    setUserStandUp(robot, standUpRoomId, userId, {}, false);
+
+    robot.send(fakeTarget, 'What did you do yesterday?');
+    dialog.addChoice(/.*/i, function (msgYday) {
+        setUserStandUp(robot, standUpRoomId, userId, {yday: msgYday.message.text.replace(/^Hubot\s+/, '')});
+
+        msgYday.reply('What will you do today?');
+        dialog.addChoice(/.*/i, (msgToday) => {
+            setUserStandUp(robot, standUpRoomId, userId, {today: msgToday.message.text.replace(/^Hubot\s+/, '')});
+
+            msgToday.reply('Any blockers?');
+            dialog.addChoice(/.*/i, (msgBlockers) => {
+                setUserStandUp(robot, standUpRoomId, userId, {blockers: msgBlockers.message.text.replace(/^Hubot\s+/, '')});
+
+                const content = getUserStandUp(robot, standUpRoomId, userId);
+
+                robot.send(
+                    {room: standUpRoomId, user: {id: userId, roomID: standUpRoomId}},
+                    `#### Stand Up: ${username}
 **yday**
-${content.yday.replace(/^Hubot\s+/, '')}
+${content.yday}
 
 **today**
-${content.today.replace(/^Hubot\s+/, '')}
+${content.today}
 
 **blockers**
-${content.blockers.replace(/^Hubot\s+/, '')}
+${content.blockers}
 `)
-                })
             })
-        });
+        })
+    });
+};
+
+
+const cancelStandUp = (robot, roomId) => {
+    const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
+    if (standup.schedule) {
+        standup.schedule.cancel();
+        standup.schedule = null;
+        standup.time = null;
+    }
+    robot.brain.set(`standup-${roomId}`, standup);
+};
+
+const pingStandUp = (robot, roomId) => () => {
+    robot.adapter.send({room: roomId, user: {}}, 'Waiting for members to complete standup....');
+    // get the members of the standup
+
+    const standup = robot.brain.get(`standup-${roomId}`);
+    // ping each user to complete their stand up
+
+    for (const memberId of Object.keys(standup.members || {})) {
+        standUpConversation(robot, roomId, memberId);
+    }
+};
+
+
+/**
+ * Save the current robot brain to a file
+ */
+const save = (data) => {
+    console.log(`writing brain to file (${BRAIN_FILE})`);
+    const sanitary = {};
+    for (const key of Object.keys(data)) {
+        if (!key.toLowerCase().includes('password')) {
+            sanitary[key] = data[key];
+        }
+    }
+    fs.writeFileSync(BRAIN_FILE, JSON.stringify(data, null, 2));
+};
+
+
+const setStandUpSchedule = (robot, roomId, cronstamp) => {
+    const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
+
+    if (standup.schedule) {
+        standup.schedule.cancel();
     }
 
-    const setUserStandup = (roomId, userId, content, upsert=true) => {
-        let standup = robot.brain.get(`standup-${roomId}-${userId}`) || {};
-        if (upsert) {
-            standup = {...standup, ...content};
-        } else {
-            standup = content;
+    standup.schedule = schedule.scheduleJob(cronstamp, pingStandUp(robot, roomId));
+    standup.time = cronstamp;
+    robot.brain.set(`standup-${roomId}`, standup);
+};
+
+
+/**
+ * Ask the User for Information to be able to set when standup should ping users
+ */
+const scheduleStandUp =  robot => (msg) => {
+
+    const {roomID: roomId} = msg.envelope.user;
+    const dialog = robot.switchBoard.startDialog(msg);
+
+    msg.reply('What days of the week should this run for (MWTRF)?');
+    dialog.addChoice(/^[MWTRF]+$/i, (msg2) => {
+        const {message: {text: weekdays}} = msg2;
+        const crondays = [];
+        for (const day of weekdays.toUpperCase().replace(/[\s,]+/g, '')) {
+            const index = 'MWTRF'.indexOf(day) + 1;
+            crondays.push(index);
+            if (index < 1) {
+                return msg2.reply(`BAD INPUT (${day})`);
+            }
         }
-        robot.brain.set(`standup-${roomId}-${userId}`, standup);
-    };
 
-    const addUserToStandUp = (roomId, userId, username) => {
-        const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
-        standup.members[userId] = username;
-        robot.brain.set(`standup-${roomId}`, standup);
-    };
+        msg2.reply('What time should this run at (HH:mm)?');
+        dialog.addChoice(/^[01][0-9]:[0-5][0-9]$/i, (msg3) => {
+            const {message: {text: time}} = msg3;
+            const [hour, min] = time.split(':');
+            let cronstamp = `0 ${min} ${hour} * * ${crondays.sort().join(',')}`;
 
-    const removeUserFromStandUp = (roomId, userId) => {
-        const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
-        delete standup.members[userId];
-        robot.brain.set(`standup-${roomId}`, standup);
-    };
+            // set the standup in the key value store
+            setStandUpSchedule(robot, roomId, cronstamp);
 
-    const scheduleStandUp = (roomId, cronstamp) => {
-        const s = schedule.scheduleJob(cronstamp, pingStandUp(roomId));
-        const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
-        standup.schedule = s;
-        standup.time = cronstamp;
-        robot.brain.set(`standup-${roomId}`, standup);
-    };
+            // notify the user
+            msg3.reply(`Standup scheduled at \`${cronstamp}\``);
+        });
+    });
+};
 
-    const cancelStandUp = (roomId) => {
-        const standup = robot.brain.get(`standup-${roomId}`) || newStandUp();
-        if (standup.schedule) {
-            standup.schedule.cancel();
-            standup.schedule = null;
-            standup.time = null;
+
+
+module.exports = function (robot) {
+    // load the brain from the JSON file
+    console.log(`reading brain from file (${BRAIN_FILE})`);
+    const brain = JSON.parse(fs.readFileSync(BRAIN_FILE));
+
+    // restart the crons
+    for (const [key, data] of Object.entries(brain._private)) {
+        if (key.startsWith('standup-') && data.time) {
+            const roomId = key.slice('standup-'.length);
+            console.log(`scheduling standup ${key} at ${data.time}`);
+            data.schedule = schedule.scheduleJob(data.time, pingStandUp(robot, roomId));
         }
-    };
+    }
 
-    const pingStandUp = roomId => () => {
-        robot.send(roomID, 'ping for standup');
-    };
+    robot.brain.mergeData(brain);
+
+    robot.brain.on('save', save)
+    robot.switchBoard = new Conversation(robot);
+    const robotUserId = robot.adapter.userId;
 
     robot.respond(/show/i, (msg) => {
         const {roomID} = msg.envelope.user;
@@ -131,35 +220,7 @@ ${content.blockers.replace(/^Hubot\s+/, '')}
         msg.reply(reply);
     });
 
-    robot.respond(/cancel/i, (msg) => {
-        const {roomID} = msg.envelope.user;
-        cancelStandUp(roomID);
-        msg.reply('Cancelled all schedules for this standup');
-    })
-
-    robot.respond(/sched(ule)?/i, (msg) => {
-        const {roomID} = msg.envelope.user;
-        const dialog = switchBoard.startDialog(msg);
-
-        msg.reply('What days of the week should this run for (MWTRF)?');
-        dialog.addChoice(/^[MWTRF]+$/i, (msg2) => {
-            const {message: {text: weekdays}} = msg2;
-            const crondays = [];
-            for (const day of weekdays) {
-                crondays.push('MWTRF'.indexOf(day) + 1);
-            }
-
-            msg2.reply('What time should this run at (HH:mm)?');
-            dialog.addChoice(/^[01][0-9]:[0-5][0-9]$/i, (msg3) => {
-                const {message: {text: time}} = msg3;
-                const [hour, min] = time.split(':');
-                let cronstamp = `* ${min} ${hour} * * ${crondays.sort().join(',')}`;
-                scheduleStandUp(roomID, cronstamp);
-                msg3.reply(`Standup scheduled at \`${cronstamp}\``);
-            });
-        });
-
-    })
+    robot.respond(/sched(ule)?/i, scheduleStandUp(robot));
 
     robot.respond(/start/i, (msg) => {
         // manually trigger a standup without scheduling
@@ -170,87 +231,38 @@ ${content.blockers.replace(/^Hubot\s+/, '')}
     robot.respond(/join/i, (msg) => {
         // add user to the standup for this room
         const {id: userId, roomID, name: username} = msg.envelope.user;
-        addUserToStandUp(roomID, userId, username);
+        addUserToStandUp(robot, roomID, userId, username);
         msg.reply(`Added ${username} to the list of standup members`);
     });
 
     robot.respond(/leave/i, (msg) => {
         // remove current user from this standup
         const {id: userId, roomID} = msg.envelope.user;
-        removeUserFromStandUp(roomID, userId);
+        removeUserFromStandUp(robot, roomID, userId);
         msg.reply(`Removed ${username} from the list of standup members`);
+    });
+
+    robot.respond(/cancel/i, (msg) => {
+        const {id: userId, roomID} = msg.envelope.user;
+        cancelStandUp(robot, roomID);
+        msg.reply('Cancelled the current standup');
     });
 
 
     robot.respond(/help/i, (msg) => {
         // show all available commands
+        let menu = `Available Commands:
+\`<bot> join\` add your user to the standup in the current room
+\`<bot> leave\` remove your user from the standup in the current room
+\`<bot> show\` list the users registered for standup in this room
+\`<bot> schedule\` set the reminder for when to ping users to enter their standup information
+\`<bot> cancel\` removes the current standup reminder
+\`<bot> init\` initiate a standup (will ping standup members individually)`;
+        msg.reply(menu);
     })
 
-    // robot.respond(/set room/i, (msg) => {
-    //     // sets the current room as the users standup room
-    //     upsertUserSetting(msg, 'standup-room', msg.envelope.user.roomID);
-    //     msg.reply('Current room set to your default standup location');
-    // });
-
-    // robot.respond(/unset room/i, (msg) => {
-    //     // sets the current room as the users standup room
-    //     upsertUserSetting(msg, 'standup-room', null);
-    //     msg.reply('Removed default standup location');
-    // });
-
-    // robot.respond(/current room/i, (msg) => {
-    //     // sets the current room as the users standup room
-    //     msg.reply(`The ID of this room is ${msg.envelope.user.roomID}`);
-    // });
-
-    // robot.respond(/show/i, (msg) => {
-    //     if (msg.envelope.user.roomID !== robotDmRoomId(msg)) {
-    //         msg.envelope.user.roomID = robotDmRoomId(msg);  // never show settings in non-DM
-    //     }
-    //     const settings = robot.brain.get(userSettingsKey(msg));
-    //     let reply = '**Current User Settings**';
-    //     for (const [setting, value] of Object.entries(settings || {})) {
-    //         reply = `${reply}\n- ${setting}: ${value}`
-    //     }
-
-    //     msg.reply(reply);
-    // });
-
-    robot.respond(/(standup|sup)/, (msg) => {
-        const dialog = switchBoard.startDialog(msg);
-        const key = generateStandUpKey(msg);
-        robot.brain.set(key, {});
-        const {message: {user: {name: username, roomID}}} = msg;
-        const standupTarget = robot.brain.get(userSettingsKey(msg))['standup-room'];
-
-        msg.reply('What did you do yesterday?');
-        dialog.addChoice(/.*/i, function (msgYday) {
-            robot.brain.set(key, {...robot.brain.get(key), yday: msgYday.message.text});
-
-            msgYday.reply('What will you do today?');
-            dialog.addChoice(/.*/i, (msgToday) => {
-                robot.brain.set(key, {...robot.brain.get(key), today: msgToday.message.text});
-
-                msgToday.reply('Any blockers?');
-                dialog.addChoice(/.*/i, (msgBlockers) => {
-                    robot.brain.set(key, {...robot.brain.get(key), blockers: msgBlockers.message.text});
-                    const content = robot.brain.get(key);
-                    if (standupTarget) {
-                        msgBlockers.envelope.user.roomID = standupTarget;  // reply to the stored preferred response room
-                    }
-                    msgBlockers.send(`#### Stand Up: ${username}
-**yday**
-${content.yday.replace(/^Hubot\s+/, '')}
-
-**today**
-${content.today.replace(/^Hubot\s+/, '')}
-
-**blockers**
-${content.blockers.replace(/^Hubot\s+/, '')}
-`)
-                })
-            })
-        });
+    robot.respond(/(init|initiate)/i, (msg) => {
+        pingStandUp(robot, msg.envelope.user.roomID)();
     });
 
 };

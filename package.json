@@ -1,10 +1,10 @@
 {
-  "name": "hubot-rocketchat-boilerplate",
+  "name": "hubot-rocketchat-standup",
   "version": "0.0.0-develop",
-  "description": "An example Hubot demonstrating usage of the Rocket.Chat adaptor.",
+  "description": "A Hubot for Initiating Virtual Stand Ups",
   "main": "bin/hubot",
   "repository": "git@github.com:RocketChat/hubot-rocketchat-boilerplate.git",
-  "author": "Tim Kinnane <tim.kinnane@rocket.chat>",
+  "author": "Cara Reisle creisle@bcgsc.ca",
   "license": "MIT",
   "private": false,
   "keywords": [
