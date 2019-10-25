@@ -237,9 +237,9 @@ module.exports = function (robot) {
 
     robot.respond(/leave/i, (msg) => {
         // remove current user from this standup
-        const {id: userId, roomID} = msg.envelope.user;
+        const {id: userId, roomID, name} = msg.envelope.user;
         removeUserFromStandUp(robot, roomID, userId);
-        msg.reply(`Removed ${username} from the list of standup members`);
+        msg.reply(`Removed ${name} from the list of standup members`);
     });
 
     robot.respond(/cancel/i, (msg) => {
