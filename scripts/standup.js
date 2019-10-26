@@ -51,29 +51,16 @@ const removeUserFromStandUp = (robot, roomId, userId) => {
 };
 
 
-const standUpConversation = (robot, standUpRoomId, userId) => {
-    const dmRoomId = `${userId}${robot.adapter.userId}`;
+const standUpConversation = (robot, standUpRoomId, userId, username) => {
 
-    const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId}};
-    const fakeMessage = {
-        message: fakeTarget,
-        reply: content => robot.send(fakeTarget, content)
-    };
-    const dialog = robot.switchBoard.startDialog(fakeMessage);
-    const standup = robot.brain.get(`standup-${standUpRoomId}`);
-    const username = standup.members[userId];
+    const dmRoomId = [robot.adapter.userId, userId].sort().join(''); // getPrivateConvoRoom(robot, userId);
 
-    setUserStandUp(robot, standUpRoomId, userId, {}, false);
-
-    robot.send(fakeTarget, 'What did you do yesterday?');
-    dialog.addChoice(/.*/i, function (msgYday) {
-        setUserStandUp(robot, standUpRoomId, userId, {yday: msgYday.message.text.replace(/^Hubot\s+/, '')});
-
-        msgYday.reply('What will you do today?');
+    const getToday = (msg, dialog) => {
+        msg.reply(`${username}, What will you do today?`);
         dialog.addChoice(/.*/i, (msgToday) => {
             setUserStandUp(robot, standUpRoomId, userId, {today: msgToday.message.text.replace(/^Hubot\s+/, '')});
 
-            msgToday.reply('Any blockers?');
+            msgToday.reply(`${username}, Any blockers?`);
             dialog.addChoice(/.*/i, (msgBlockers) => {
                 setUserStandUp(robot, standUpRoomId, userId, {blockers: msgBlockers.message.text.replace(/^Hubot\s+/, '')});
 
@@ -92,8 +79,35 @@ ${content.today}
 ${content.blockers}
 `)
             })
-        })
-    });
+        });
+    };
+
+    const getYday = (msg, dialog) => {
+        const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId}};
+        robot.send(fakeTarget, `${username}, What did you do yesterday?`);
+        dialog.addChoice(/.*/i, function (resp) {
+            if (resp.envelope.user.roomID !== dmRoomId) {
+                console.error('\nuser sent non-direct message', resp.envelope.user.roomID, resp.envelope.user.name)
+                getYday(msg, dialog);
+            } else {
+                setUserStandUp(robot, standUpRoomId, userId, {yday: resp.message.text.replace(/^Hubot\s+/, '')});
+                getToday(resp, dialog);
+            }
+        });
+    };
+
+    const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId}};
+    const fakeMessage = {
+        message: fakeTarget,
+        envelope: fakeTarget,
+        reply: content => robot.send(fakeTarget, content)
+    };
+    const dialog = robot.switchBoard.startDialog(fakeMessage, 10 * 60 * 1000);  // 10m
+    const standup = robot.brain.get(`standup-${standUpRoomId}`);
+
+    setUserStandUp(robot, standUpRoomId, userId, {}, false);
+
+    getYday(fakeTarget, dialog);
 };
 
 
@@ -115,7 +129,8 @@ const pingStandUp = (robot, roomId) => () => {
     // ping each user to complete their stand up
 
     for (const memberId of Object.keys(standup.members || {})) {
-        standUpConversation(robot, roomId, memberId);
+        const username = standup.members[memberId]
+        standUpConversation(robot, roomId, memberId, username);
     }
 };
 
@@ -230,7 +245,8 @@ module.exports = function (robot) {
 
     robot.respond(/join/i, (msg) => {
         // add user to the standup for this room
-        const {id: userId, roomID, name: username} = msg.envelope.user;
+        const {id: userId, roomID, name: username, roomType} = msg.envelope.user;
+
         addUserToStandUp(robot, roomID, userId, username);
         msg.reply(`Added ${username} to the list of standup members`);
     });
@@ -248,6 +264,11 @@ module.exports = function (robot) {
         msg.reply('Cancelled the current standup');
     });
 
+    robot.respond(/get room id/i, (msg) => {
+        const {id: userId, roomID} = msg.envelope.user;
+        msg.reply(`The current room Id is ${roomID}`);
+    });
+
 
     robot.respond(/help/i, (msg) => {
         // show all available commands
@@ -257,7 +278,7 @@ module.exports = function (robot) {
 \`<bot> show\` list the users registered for standup in this room
 \`<bot> schedule\` set the reminder for when to ping users to enter their standup information
 \`<bot> cancel\` removes the current standup reminder
-\`<bot> init\` initiate a standup (will ping standup members individually)`;
+\`<bot> init\` manually initiate a standup (will ping standup members individually)`;
         msg.reply(menu);
     })
 
