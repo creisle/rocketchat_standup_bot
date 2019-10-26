@@ -53,7 +53,7 @@ const removeUserFromStandUp = (robot, roomId, userId) => {
 
 const standUpConversation = (robot, standUpRoomId, userId, username) => {
 
-    const dmRoomId = [robot.adapter.userId, userId].sort().join(''); // getPrivateConvoRoom(robot, userId);
+    const dmRoomId = [robot.adapter.userId, userId].sort().join('');
 
     const getToday = (msg, dialog) => {
         msg.reply(`${username}, What will you do today?`);
