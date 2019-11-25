@@ -74,7 +74,7 @@ these to set the cron-job reminder
 
 ```
 git clone https://svn.bcgsc.ca/bitbucket/scm/dat/rocketchat_standup_bot.git
-cd hubot-rocketchat-boilerplate
+cd rocketchat_standup_bot
 npm install
 ```
 Create a _.env_ file with content:
