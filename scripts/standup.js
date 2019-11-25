@@ -197,12 +197,17 @@ const scheduleStandUp =  robot => (msg) => {
 
 
 module.exports = function (robot) {
+    // check if the brain file exists
+    if (!fs.existsSync(BRAIN_FILE)) {
+        console.log(`writing empty brain file (${BRAIN_FILE})`);
+        fs.writeFileSync(BRAIN_FILE, JSON.stringify({}));
+    }
     // load the brain from the JSON file
     console.log(`reading brain from file (${BRAIN_FILE})`);
     const brain = JSON.parse(fs.readFileSync(BRAIN_FILE));
 
     // restart the crons
-    for (const [key, data] of Object.entries(brain._private)) {
+    for (const [key, data] of Object.entries(brain._private || {})) {
         if (key.startsWith('standup-') && data.time) {
             const roomId = key.slice('standup-'.length);
             console.log(`scheduling standup ${key} at ${data.time}`);
