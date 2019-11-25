@@ -1,6 +1,6 @@
 {
   "name": "hubot-rocketchat-standup",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A Hubot for Initiating Virtual Stand Ups",
   "main": "bin/hubot",
   "repository": "git@github.com:RocketChat/hubot-rocketchat-boilerplate.git",
