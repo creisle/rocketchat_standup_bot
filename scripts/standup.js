@@ -167,12 +167,12 @@ const scheduleStandUp =  robot => (msg) => {
     const {roomID: roomId} = msg.envelope.user;
     const dialog = robot.switchBoard.startDialog(msg);
 
-    msg.reply('What days of the week should this run for (MWTRF)?');
-    dialog.addChoice(/^[MWTRF]+$/i, (msg2) => {
+    msg.reply('What days of the week should this run for (MTWRF)?');
+    dialog.addChoice(/^[MTWRF]+$/i, (msg2) => {
         const {message: {text: weekdays}} = msg2;
         const crondays = [];
         for (const day of weekdays.toUpperCase().replace(/[\s,]+/g, '')) {
-            const index = 'MWTRF'.indexOf(day) + 1;
+            const index = 'MTWRF'.indexOf(day) + 1;
             crondays.push(index);
             if (index < 1) {
                 return msg2.reply(`BAD INPUT (${day})`);
