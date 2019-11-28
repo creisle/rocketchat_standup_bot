@@ -47,24 +47,19 @@ const removeUserFromStandUp = (robot, roomId, userId) => {
 };
 
 
-const standUpConversation = (robot, standUpRoomId, userId, username) => {
+const getReplyText = (reply) => {
+    return reply.message.text.replace(/^Hubot\s+/, '');
+};
 
-    const dmRoomId = [robot.adapter.userId, userId].sort().join('');
 
-    const getToday = (msg, dialog) => {
-        msg.reply(`${username}, What will you do today?`);
-        dialog.addChoice(/.*/i, (msgToday) => {
-            setUserStandUp(robot, standUpRoomId, userId, {today: msgToday.message.text.replace(/^Hubot\s+/, '')});
+const isDirectReply = (msg, dmRoomId) => {
+    return Boolean(msg.envelope.user.roomID === dmRoomId);
+};
 
-            msgToday.reply(`${username}, Any blockers?`);
-            dialog.addChoice(/.*/i, (msgBlockers) => {
-                setUserStandUp(robot, standUpRoomId, userId, {blockers: msgBlockers.message.text.replace(/^Hubot\s+/, '')});
 
-                const content = getUserStandUp(robot, standUpRoomId, userId);
-
-                robot.send(
-                    {room: standUpRoomId, user: {id: userId, roomID: standUpRoomId}},
-                    `#### Stand Up: ${username}
+const postStandup = (robot, standUpRoomId, userId, username) => {
+    const content = getUserStandUp(robot, standUpRoomId, userId);
+    const reply = `#### Stand Up: ${username}
 **yday**
 ${content.yday}
 
@@ -72,38 +67,57 @@ ${content.yday}
 ${content.today}
 
 **blockers**
-${content.blockers}
-`)
-            })
-        });
-    };
+${content.blockers}`;
 
-    const getYday = (msg, dialog) => {
-        const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId}};
-        robot.send(fakeTarget, `${username}, What did you do yesterday?`);
-        dialog.addChoice(/.*/i, function (resp) {
-            if (resp.envelope.user.roomID !== dmRoomId) {
-                console.error('\nuser sent non-direct message', resp.envelope.user.roomID, resp.envelope.user.name)
-                getYday(msg, dialog);
-            } else {
-                setUserStandUp(robot, standUpRoomId, userId, {yday: resp.message.text.replace(/^Hubot\s+/, '')});
-                getToday(resp, dialog);
-            }
-        });
-    };
+    robot.send(
+        {room: standUpRoomId, user: {id: userId, roomID: standUpRoomId}},
+        reply
+    );
+};
 
-    const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId}};
+
+const askStandupQuestions = (robot, standUpRoomId, userId, username) => {
+    const dmRoomId = [robot.adapter.userId, userId].sort().join('');
+
+    const questions = [
+        {question: `@${username}, what did you do last day?`, key: 'yday'},
+        {question: `@${username}, what will you do today?`, key: 'today'},
+        {question: `@${username}, any blockers?`, key: 'blockers'}
+    ];
+
+    const fakeTarget = {room: dmRoomId, user: {roomID: dmRoomId, id: userId, name: username}};
     const fakeMessage = {
         message: fakeTarget,
         envelope: fakeTarget,
         reply: content => robot.send(fakeTarget, content)
     };
+    robot.send(fakeTarget, '#### Collecting today\'s standup');
     const dialog = robot.switchBoard.startDialog(fakeMessage, 10 * 60 * 1000);  // 10m
     const standup = robot.brain.get(`standup-${standUpRoomId}`);
 
-    setUserStandUp(robot, standUpRoomId, userId, {}, false);
 
-    getYday(fakeTarget, dialog);
+    const ask = (msg, questionIndex) => {
+        if (questionIndex >= questions.length) {
+            // all question have been asked, post the results
+            postStandup(robot, standUpRoomId, userId, username);
+            return;
+        }
+        const {question, key} = questions[questionIndex];
+
+        msg.reply(question);
+        dialog.addChoice(/.*/i, (resp) => {
+            if (!isDirectReply(resp, dmRoomId)) {
+                console.error('\nuser sent non-direct message', resp.envelope.user.roomID, resp.envelope.user.name)
+                ask(msg, questionIndex);
+            } else {
+                setUserStandUp(robot, standUpRoomId, userId, {[key]: getReplyText(resp)});
+                ask(fakeMessage, questionIndex + 1);
+            }
+        });
+    };
+
+
+    ask(fakeMessage, 0);
 };
 
 
@@ -126,7 +140,7 @@ const pingStandUp = (robot, roomId) => () => {
 
     for (const memberId of Object.keys(standup.members || {})) {
         const username = standup.members[memberId]
-        standUpConversation(robot, roomId, memberId, username);
+        askStandupQuestions(robot, roomId, memberId, username);
     }
 };
 
@@ -167,12 +181,12 @@ const scheduleStandUp =  robot => (msg) => {
     const {roomID: roomId} = msg.envelope.user;
     const dialog = robot.switchBoard.startDialog(msg);
 
-    msg.reply('What days of the week should this run for (MWTRF)?');
-    dialog.addChoice(/^[MWTRF]+$/i, (msg2) => {
+    msg.reply('What days of the week should this run for (MTWRF)?');
+    dialog.addChoice(/^[MTWRF]+$/i, (msg2) => {
         const {message: {text: weekdays}} = msg2;
         const crondays = [];
         for (const day of weekdays.toUpperCase().replace(/[\s,]+/g, '')) {
-            const index = 'MWTRF'.indexOf(day) + 1;
+            const index = 'MTWRF'.indexOf(day) + 1;
             crondays.push(index);
             if (index < 1) {
                 return msg2.reply(`BAD INPUT (${day})`);
