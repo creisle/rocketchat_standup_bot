@@ -51,6 +51,9 @@ They should see a reply like the following
 Added USERNAME to the list of standup members
 ```
 
+After each member joins they should open a conversation with the bot and send a private message to
+ensure the channel is available for the bot to ping the user later
+
 You can see the list of members joined by running the `bot show` command
 
 #### Scheduling the Reminder

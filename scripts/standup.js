@@ -9,6 +9,7 @@ const path = require('path');
 
 
 const BRAIN_FILE = path.join(process.env.FILE_BRAIN_PATH || '.', 'brain-dump.json');
+const TIMEOUT = 90 * 60 * 1000; // 90m standup timeout
 
 const newStandUp = () => {
     return {members: {}, schedule: null, time: null};
@@ -92,7 +93,7 @@ const askStandupQuestions = (robot, standUpRoomId, userId, username) => {
         reply: content => robot.send(fakeTarget, content)
     };
     robot.send(fakeTarget, '#### Collecting today\'s standup');
-    const dialog = robot.switchBoard.startDialog(fakeMessage, 10 * 60 * 1000);  // 10m
+    const dialog = robot.switchBoard.startDialog(fakeMessage, TIMEOUT);  // 10m
     const standup = robot.brain.get(`standup-${standUpRoomId}`);
 
 
