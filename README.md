@@ -112,7 +112,5 @@ Which will show you the available commands
 
 ## Configuration
 
-When running locally, we've used [`dotenv`][dotenv] to load configs from the
+When running locally, we've used `dotenv` to load configs from the
 `./.env` file. That makes it easy for setting environment variables.
-
-Please see [adapter docs for source of truth on environment variables][env].
